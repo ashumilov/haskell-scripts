@@ -191,28 +191,13 @@ passThrough ((x1, y1), (x2, y2))
 squaredModulus :: Amplitude -> Double
 squaredModulus (a :+ b) = abs $ a^(2::Int) + b^(2::Int)
 
--- View --
+-- Render --
 
 type View = [[String]]
 
-spaceView :: Int -> Int -> View
-spaceView width heigh = replicate heigh $ replicate width "  "
-
-showView :: View -> String
-showView = unlines . fmap concat
-
-combineViewList :: [View] -> View
-combineViewList = foldl1 combineViews
-
-combineViews :: View -> View -> View
-combineViews = zipWith (<>)
-
--- Render --
-
-renderWorld :: Coord -> World -> String
+renderWorld :: Coord -> World -> View
 renderWorld dimentions@(width, height)
-    = showView
-    . combineViewList
+    = combineViewList
     . intersperse (spaceView 4 $ height + 2 {- caption -})
     . fmap (renderFlow dimentions)
 
@@ -237,6 +222,18 @@ renderCaption (width, _) amplitude = renderLine <$> [showAmplitude,showSquaredMo
         split = chunksOf 2 . take realWidth
         filler text = concat $ replicate (realWidth - length text) "  "
         realWidth = width * 2
+
+spaceView :: Int -> Int -> View
+spaceView width heigh = replicate heigh $ replicate width "  "
+
+showView :: View -> String
+showView = unlines . fmap concat
+
+combineViewList :: [View] -> View
+combineViewList = foldl1 combineViews
+
+combineViews :: View -> View -> View
+combineViews = zipWith (<>)
 
 -- Show --
 
@@ -491,7 +488,7 @@ main = do
 
         evolution index = do
             putStr "\ESC[2J"
-            putStrLn $ renderWorld (width, height) $ worlds !! index
+            putStrLn $ showView . renderWorld (width, height) . (worlds !!) $ index
             key <- getKey
             case key of
                 "q"      -> error "Quit"
