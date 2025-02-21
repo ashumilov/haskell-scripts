@@ -4,7 +4,6 @@
 {-# LANGUAGE RecordWildCards #-}
 
 import           Control.Applicative
-import           Control.Arrow
 import           Control.Monad
 import           Data.Complex
 import           Data.List
@@ -20,130 +19,125 @@ import           System.IO
 
 type World = [Flow]
 
-type Flow = (Configuration, Amplitude)
+data Flow = Flow
+    { configuration :: Configuration
+    , amplitude     :: Amplitude
+    }
 
 data Configuration = Configuration
     { particles :: Set Particle
-    , objects   :: Map Position Object
+    , objects   :: Map Coord Object
     } deriving (Eq, Ord, Show)
 
 data Object
-    = MirrorRight     -- //
-    | MirrorLeft      -- \\
-    | SemiMirrorRight -- /
-    | SemiMirrorLeft  -- \
-    | Obstacle        -- #
-    | Switch Bool     -- o|O
-    | Detector Int    -- 0, 1, 2, ...
+    = MirrorRight     -- //            deflect
+    | MirrorLeft      -- \\            - " -
+    | SemiMirrorRight -- /             deflect and pass through
+    | SemiMirrorLeft  -- \             - " -
+    | Obstacle        -- #             block and destroy
+    | Switch Bool     -- o|O           pass through and change own state
+    | Detector Int    -- 0, 1, 2, ...  count and destroy
     deriving (Eq, Ord, Show)
 
 type Amplitude = Complex Double
 
-type Particle = (Position, Position)
+type Particle = (Coord, Coord)
 
-type Position = (Double, Double)
+type Coord = (Int, Int)
 
 evolve :: World -> World
 evolve = maybeCombine . concatMap processFlow
 
 maybeCombine :: World -> World
 maybeCombine
-    = fmap (\(c, (_, a)) -> (c, a))
+    = fmap (\(c, (_, a)) -> Flow c a)
     . sortOn (fst . snd)
     . M.toList
     . M.fromListWith (\(i, a) (_, a')-> (i, a + a'))
-    . zipWith (\i (c,a) -> (c,(i,a))) [1..]
-
-{-
-maybeCombine' :: World -> World
-maybeCombine' [] = []
-maybeCombine' (flow:rest) = combine [] flow rest []
-    where
-        combine world flow [] [] = reverse (flow:world)
-        combine world flow [] (flow':rest) = combine (flow:world) flow' rest []
-        combine world flow (next:restFrom) restTo
-            | fst flow == fst next = combine world (combineFlow flow next) restFrom restTo
-            | otherwise            = combine world flow restFrom (next:restTo)
-
-        combineFlow (c,a) (c',a') = (c, a + a')
--}
+    . zipWith (\i (c,a) -> (c,(i,a))) [(1::Int)..]
+    . fmap (\Flow{..} -> (configuration, amplitude))
 
 processFlow :: Flow -> [Flow]
-processFlow flow@(configuration@Configuration{..}, amplitude) = processParticles particles
-    where
-        processParticles :: Set Particle -> [Flow]
-        processParticles particles | S.null particles = [flow]
-                                   | otherwise        = concatMap processParticle particles
-        processParticle :: Particle -> [Flow]
-        processParticle particle@(_, position) = collideWith $ M.lookup position objects
-          where
-              collideWith :: Maybe Object -> [Flow]
-              collideWith (Just MirrorRight) =
-                  let newConfiguration = configuration
-                          { particles = S.insert newParticle . S.delete particle $ particles
-                          }
-                      [newParticle] = collide MirrorRight particle
-                  in [(newConfiguration, amplitude * i)]
+processFlow flow = processParticles (particles . configuration $ flow) flow
 
-              collideWith (Just MirrorLeft) =
-                  let newConfiguration = configuration
-                          { particles = S.insert newParticle . S.delete particle $ particles
-                          }
-                      [newParticle] = collide MirrorLeft particle
-                  in [(newConfiguration, amplitude * i)]
+processParticles :: Set Particle -> Flow -> [Flow]
+processParticles particles flow | S.null particles = [flow]
+                                | otherwise        = foldr processParticle [flow] particles
 
-              collideWith (Just SemiMirrorRight) =
-                  let newConfigurationDirect = configuration
-                          { particles = S.insert newParticleDirect . S.delete particle $ particles
-                          }
-                      newConfigurationReflected = configuration
-                          { particles = S.insert newParticleReflected . S.delete particle $ particles
-                          }
-                      [newParticleDirect, newParticleReflected] = collide SemiMirrorRight particle
-                  in [(newConfigurationDirect, amplitude), (newConfigurationReflected, amplitude * i)]
+processParticle :: Particle -> [Flow] -> [Flow]
+processParticle particle@(_, position) = foldr processCollisionWithObject mempty
+  where
+      processCollisionWithObject :: Flow -> [Flow] -> [Flow]
+      processCollisionWithObject flow = (<>) $ processCollision maybeObject flow
+          where maybeObject = M.lookup position (objects . configuration $ flow)
 
-              collideWith (Just SemiMirrorLeft) =
-                  let newConfigurationDirect = configuration
-                          { particles = S.insert newParticleDirect . S.delete particle $ particles
-                          }
-                      newConfigurationReflected = configuration
-                          { particles = S.insert newParticleReflected . S.delete particle $ particles
-                          }
-                      [newParticleDirect, newParticleReflected] = collide SemiMirrorLeft particle
-                  in [(newConfigurationDirect, amplitude), (newConfigurationReflected, amplitude * i)]
+      processCollision :: Maybe Object -> Flow -> [Flow]
+      processCollision (Just MirrorRight) Flow{configuration=configuration@Configuration{..},..} =
+          let newConfiguration = configuration
+                  { particles = updateParticle particle newParticle particles
+                  }
+              [newParticle] = collide MirrorRight particle
+          in [Flow newConfiguration (amplitude * iUnit)]
 
-              collideWith (Just Obstacle) =
-                  let newConfiguration = configuration
-                          { particles = S.delete particle particles
-                          }
-                  in [(newConfiguration, amplitude)]
+      processCollision (Just MirrorLeft) Flow{configuration=configuration@Configuration{..},..} =
+          let newConfiguration = configuration
+                  { particles = updateParticle particle newParticle particles
+                  }
+              [newParticle] = collide MirrorLeft particle
+          in [Flow newConfiguration (amplitude * iUnit)]
 
-              collideWith (Just switch@(Switch b)) =
-                  let newConfiguration = configuration
-                          { particles = S.insert newParticle . S.delete particle $ particles
-                          , objects = M.insert position (Switch $ not b) objects
-                          }
-                      [newParticle] = collide switch particle
-                  in [(newConfiguration, amplitude)]
+      processCollision (Just SemiMirrorRight) Flow{configuration=configuration@Configuration{..},..} =
+          let newConfigurationDirect = configuration
+                  { particles = updateParticle particle newParticleDirect particles
+                  }
+              newConfigurationReflected = configuration
+                  { particles = updateParticle particle newParticleReflected particles
+                  }
+              [newParticleDirect, newParticleReflected] = collide SemiMirrorRight particle
+          in [Flow newConfigurationDirect amplitude, Flow newConfigurationReflected (amplitude * iUnit)]
 
-              collideWith (Just (Detector n)) =
-                  let newConfiguration = configuration
-                          { objects = M.insert position updatedDetector objects
-                          , particles = S.delete particle particles
-                          }
-                      updatedDetector = Detector $ if squaredModulus amplitude > 0 then n + 1 else n
-                  in [(newConfiguration, amplitude)]
+      processCollision (Just SemiMirrorLeft) Flow{configuration=configuration@Configuration{..},..} =
+          let newConfigurationDirect = configuration
+                  { particles = updateParticle particle newParticleDirect particles
+                  }
+              newConfigurationReflected = configuration
+                  { particles = updateParticle particle newParticleReflected particles
+                  }
+              [newParticleDirect, newParticleReflected] = collide SemiMirrorLeft particle
+          in [Flow newConfigurationDirect amplitude, Flow newConfigurationReflected (amplitude * iUnit)]
 
-              collideWith Nothing =
-                  let newConfiguration = configuration
-                          { particles = S.insert newParticle . S.delete particle $ particles
-                          }
-                      [newParticle] = passThrough particle
-                  in [(newConfiguration, amplitude)]
+      processCollision (Just Obstacle) Flow{configuration=configuration@Configuration{..},..} =
+          let newConfiguration = configuration
+                  { particles = S.delete particle particles
+                  }
+          in [Flow newConfiguration amplitude]
 
-              i = 0 :+ 1
+      processCollision (Just switch@(Switch b)) Flow{configuration=configuration@Configuration{..},..} =
+          let newConfiguration = configuration
+                  { particles = updateParticle particle newParticle particles
+                  , objects = M.insert position (Switch $ not b) objects
+                  }
+              [newParticle] = collide switch particle
+          in [Flow newConfiguration amplitude]
 
+      processCollision (Just (Detector n)) Flow{configuration=configuration@Configuration{..},..} =
+          let newConfiguration = configuration
+                  { objects = M.insert position updatedDetector objects
+                  , particles = S.delete particle particles
+                  }
+              updatedDetector = Detector $ if squaredModulus amplitude > 0 then n + 1 else n
+          in [Flow newConfiguration amplitude]
 
+      processCollision Nothing Flow{configuration=configuration@Configuration{..},..} =
+          let newConfiguration = configuration
+                  { particles = updateParticle particle newParticle particles
+                  }
+              [newParticle] = passThrough particle
+          in [Flow newConfiguration amplitude]
+
+      updateParticle oldParticle newParticle = S.insert newParticle . S.delete oldParticle
+
+      iUnit = 0 :+ 1
 
 collide :: Object -> Particle -> [Particle]
 collide MirrorRight ((x1, y1), (x2, y2)) =
@@ -186,19 +180,22 @@ collide (Switch _) particle = passThrough particle
 
 collide object _ = error $ "Object is not supported: " <> show object
 
+passThrough :: Particle -> [Particle]
 passThrough ((x1, y1), (x2, y2))
     | x1 < x2 && y1 == y2 = [((x2, y1), (x2 + 1, y2))]
     | x1 > x2 && y1 == y2 = [((x2, y1), (x2 - 1, y2))]
     | x1 == x2 && y1 < y2 = [((x1, y2), (x2, y2 + 1))]
     | x1 == x2 && y1 > y2 = [((x1, y2), (x2, y2 - 1))]
+    | otherwise           = error $ "Invalid particle: " ++ show ((x1, y1), (x2, y2))
 
 squaredModulus :: Amplitude -> Double
-squaredModulus (a :+ b) = abs $ a^2 + b^2
+squaredModulus (a :+ b) = abs $ a^(2::Int) + b^(2::Int)
 
 -- View --
 
 type View = [[String]]
 
+spaceView :: Int -> Int -> View
 spaceView width heigh = replicate heigh $ replicate width "  "
 
 showView :: View -> String
@@ -212,21 +209,36 @@ combineViews = zipWith (<>)
 
 -- Render --
 
-renderWorld :: Double -> Double -> World -> String
-renderWorld width height
+renderWorld :: Coord -> World -> String
+renderWorld dimentions@(width, height)
     = showView
     . combineViewList
-    . intersperse (spaceView 4 (round height))
-    . fmap (renderConfiguration width height . fst)
+    . intersperse (spaceView 4 $ height + 2 {- caption -})
+    . fmap (renderFlow dimentions)
 
-renderConfiguration :: Double -> Double -> Configuration -> View
-renderConfiguration width height Configuration{..} = let
-    map = [ c | y <- [height-1,height-2..0], x <- [0..width-1], let c = showCell (x, y) ]
+renderFlow :: Coord -> Flow -> View
+renderFlow dimentions Flow{..}
+    = renderConfiguration dimentions configuration
+    <> renderCaption dimentions amplitude
+
+renderConfiguration :: Coord -> Configuration -> View
+renderConfiguration (width, height) Configuration{..} = let
+    worldMap = [ c | y <- [height-1,height-2..0], x <- [0..width-1], let c = showCell (x, y) ]
     showCell coord = fromMaybe ". " $ getObject coord <|> getParticle coord
     getParticle coord = showParticle . (coord, ) <$> M.lookup coord particlesMap
     getObject coord = showObject <$> M.lookup coord objects
     particlesMap = M.fromList . S.toList $ particles
-    in chunksOf (round width) map
+    in chunksOf width worldMap
+
+renderCaption :: Coord -> Amplitude -> View
+renderCaption (width, _) amplitude = renderLine <$> [showAmplitude,showSquaredModulus]
+    where
+        renderLine showF = let text = showF amplitude in split (text <> filler text)
+        split = chunksOf 2 . take realWidth
+        filler text = concat $ replicate (realWidth - length text) "  "
+        realWidth = width * 2
+
+-- Show --
 
 showParticle :: Particle -> String
 showParticle ((x1, y1), (x2, y2))
@@ -236,6 +248,7 @@ showParticle ((x1, y1), (x2, y2))
     | x1 > x2 && y1 == y2 = "< "
     | otherwise           = error $ "Invalid particle: " ++ show ((x1, y1), (x2, y2))
 
+showObject :: Object -> String
 showObject = \case
     MirrorRight     -> "//"
     MirrorLeft      -> "\\\\"
@@ -245,8 +258,11 @@ showObject = \case
     Switch b        -> if b then "O " else "o "
     Detector n      -> show (n `mod` 10) <> " "
 
---renderAmplitude :: Amplitude -> String
---renderAmplitude (a :+ b) = show a ++ " + " ++ show b ++ "i"
+showAmplitude :: Amplitude -> String
+showAmplitude (a :+ b) = "a: " <> show (round a) ++ " + " ++ show (round b) ++ "i"
+
+showSquaredModulus :: Amplitude -> String
+showSquaredModulus a = "sm: " <> show (squaredModulus a)
 
 chunksOf :: Int -> [a] -> [[a]]
 chunksOf n xs = step xs []
@@ -256,7 +272,7 @@ chunksOf n xs = step xs []
             (c, cs) -> c : step cs output
 
 
--- Worlds --
+-- Worlds (Initial Configurations) --
 
 initialAmplitude :: Amplitude
 initialAmplitude = (-1) :+ 0
@@ -272,17 +288,18 @@ initialAmplitude = (-1) :+ 0
 
 world1 :: World
 world1 =
-    [ ( Configuration
-        { particles = S.fromList
-            [ ((0, 0), (1, 0))
-            ]
-        , objects = M.fromList
-            [ ((4, 0), MirrorRight)
-            , ((4, 4), Detector 0)
-            ]
-        }
-      , initialAmplitude
-      )
+    [ Flow
+      { configuration = Configuration
+          { particles = S.fromList
+              [ ((0, 0), (1, 0))
+              ]
+          , objects = M.fromList
+              [ ((4, 0), MirrorRight)
+              , ((4, 4), Detector 0)
+              ]
+          }
+      , amplitude = initialAmplitude
+      }
     ]
 
 {-
@@ -296,18 +313,19 @@ world1 =
 
 world2 :: World
 world2 =
-    [ ( Configuration
-        { particles = S.fromList
-            [ ((0, 0), (1, 0))
-            ]
-        , objects = M.fromList
-            [ ((4, 0), SemiMirrorRight)
-            , ((8, 0), Detector 0)
-            , ((4, 4), Detector 0)
-            ]
-        }
-      , initialAmplitude
-      )
+    [ Flow
+      { configuration = Configuration
+          { particles = S.fromList
+              [ ((0, 0), (1, 0))
+              ]
+          , objects = M.fromList
+              [ ((4, 0), SemiMirrorRight)
+              , ((8, 0), Detector 0)
+              , ((4, 4), Detector 0)
+              ]
+          }
+      , amplitude = initialAmplitude
+      }
     ]
 
 {-
@@ -325,21 +343,22 @@ world2 =
 
 world3 :: World
 world3 =
-    [ ( Configuration
-        { particles = S.fromList
-            [ ((0, 0), (1, 0))
-            ]
-        , objects = M.fromList
-            [ ((4, 0), SemiMirrorRight)
-            , ((8, 0), MirrorRight)
-            , ((4, 4), MirrorRight)
-            , ((8, 4), SemiMirrorRight)
-            , ((12, 4), Detector 0)
-            , ((8, 8), Detector 0)
-            ]
-        }
-      , initialAmplitude
-      )
+    [ Flow
+      { configuration = Configuration
+          { particles = S.fromList
+              [ ((0, 0), (1, 0))
+              ]
+          , objects = M.fromList
+              [ ((4, 0), SemiMirrorRight)
+              , ((8, 0), MirrorRight)
+              , ((4, 4), MirrorRight)
+              , ((8, 4), SemiMirrorRight)
+              , ((12, 4), Detector 0)
+              , ((8, 8), Detector 0)
+              ]
+          }
+      , amplitude = initialAmplitude
+      }
     ]
 
 {-
@@ -357,22 +376,23 @@ world3 =
 
 world4 :: World
 world4 =
-    [ ( Configuration
-        { particles = S.fromList
-            [ ((0, 0), (1, 0))
-            ]
-        , objects = M.fromList
-            [ ((4, 0), SemiMirrorRight)
-            , ((8, 0), MirrorRight)
-            , ((4, 4), MirrorRight)
-            , ((6, 4), Obstacle)
-            , ((8, 4), SemiMirrorRight)
-            , ((12, 4), Detector 0)
-            , ((8, 8), Detector 0)
-            ]
-        }
-      , initialAmplitude
-      )
+    [ Flow
+      { configuration = Configuration
+          { particles = S.fromList
+              [ ((0, 0), (1, 0))
+              ]
+          , objects = M.fromList
+              [ ((4, 0), SemiMirrorRight)
+              , ((8, 0), MirrorRight)
+              , ((4, 4), MirrorRight)
+              , ((6, 4), Obstacle)
+              , ((8, 4), SemiMirrorRight)
+              , ((12, 4), Detector 0)
+              , ((8, 8), Detector 0)
+              ]
+          }
+      , amplitude = initialAmplitude
+      }
     ]
 
 {-
@@ -390,22 +410,23 @@ world4 =
 
 world5 :: World
 world5 =
-    [ ( Configuration
-        { particles = S.fromList
-            [ ((0, 0), (1, 0))
-            ]
-        , objects = M.fromList
-            [ ((4, 0), SemiMirrorRight)
-            , ((6, 0), Switch False)
-            , ((8, 0), MirrorRight)
-            , ((4, 4), MirrorRight)
-            , ((8, 4), SemiMirrorRight)
-            , ((12, 4), Detector 0)
-            , ((8, 8), Detector 0)
-            ]
-        }
-      , initialAmplitude
-      )
+    [ Flow
+      { configuration = Configuration
+          { particles = S.fromList
+              [ ((0, 0), (1, 0))
+              ]
+          , objects = M.fromList
+              [ ((4, 0), SemiMirrorRight)
+              , ((6, 0), Switch False)
+              , ((8, 0), MirrorRight)
+              , ((4, 4), MirrorRight)
+              , ((8, 4), SemiMirrorRight)
+              , ((12, 4), Detector 0)
+              , ((8, 8), Detector 0)
+              ]
+          }
+      , amplitude = initialAmplitude
+      }
     ]
 
 {-
@@ -422,19 +443,20 @@ world5 =
 
 world6 :: World
 world6 =
-    [ ( Configuration
-        { particles = S.fromList
-            [ ((0, 4), (1, 4))
-            , ((4, 0), (4, 1))
-            ]
-        , objects = M.fromList
-            [ ((4, 4), SemiMirrorRight)
-            , ((4, 8), Detector 0)
-            , ((8, 4), Detector 0)
-            ]
-        }
-      , initialAmplitude
-      )
+    [ Flow
+      { configuration = Configuration
+          { particles = S.fromList
+              [ ((0, 4), (1, 4))
+              , ((4, 0), (4, 1))
+              ]
+          , objects = M.fromList
+              [ ((4, 4), SemiMirrorRight)
+              , ((4, 8), Detector 0)
+              , ((8, 4), Detector 0)
+              ]
+          }
+      , amplitude = initialAmplitude
+      }
     ]
 
 -- IO --
@@ -446,6 +468,7 @@ getKey = reverse <$> getKey' ""
           more <- hReady stdin
           (if more then getKey' else return) (char:chars)
 
+main :: IO ()
 main = do
     let initWorlds =
             [ (world1, 5, 5, 9)
@@ -457,18 +480,18 @@ main = do
             ]
 
     args <- getArgs
-    let index = case args of
+    let idx = case args of
             [index] -> read index
             _       -> error $ "Usage: ./quantum.hs <index>, where index is [1.."
                 <> show (length initWorlds) <> "]"
                 <> "\nLeft/right arrow keys to navigate past/future, 'q' to quit"
 
-    let (world, width, height, time) = initWorlds !! (index - 1)
+    let (world, width, height, time) = initWorlds !! (idx - 1)
         worlds = take time (iterate evolve world)
 
         evolution index = do
             putStr "\ESC[2J"
-            putStrLn $ renderWorld width height $ worlds !! index
+            putStrLn $ renderWorld (width, height) $ worlds !! index
             key <- getKey
             case key of
                 "q"      -> error "Quit"
