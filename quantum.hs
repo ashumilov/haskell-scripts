@@ -4,7 +4,7 @@
 {-# LANGUAGE RecordWildCards #-}
 
 import           Control.Applicative
-import           Control.Concurrent  (threadDelay)
+import           Control.Arrow
 import           Control.Monad
 import           Data.Complex
 import           Data.List
@@ -13,9 +13,10 @@ import qualified Data.Map            as M
 import           Data.Maybe
 import           Data.Set            (Set)
 import qualified Data.Set            as S
-import           Data.Tuple
 import           System.Environment
 import           System.IO
+
+-- Model --
 
 type World = [Flow]
 
@@ -31,6 +32,7 @@ data Object
     | MirrorLeft      -- \\
     | SemiMirrorRight -- /
     | SemiMirrorLeft  -- \
+    | Obstacle        -- #
     | Switch Bool     -- o|O
     | Detector Int    -- 0, 1, 2, ...
     deriving (Eq, Ord, Show)
@@ -42,10 +44,32 @@ type Particle = (Position, Position)
 type Position = (Double, Double)
 
 evolve :: World -> World
-evolve = M.fromListWith (+) . concatMap processConfiguration . M.toList
+evolve = maybeCombine . concatMap processFlow
 
-processConfiguration :: Flow -> [Flow]
-processConfiguration flow@(configuration@Configuration{..}, amplitude) = processParticles particles
+maybeCombine :: World -> World
+maybeCombine
+    = fmap (\(c, (_, a)) -> (c, a))
+    . sortOn (fst . snd)
+    . M.toList
+    . M.fromListWith (\(i, a) (_, a')-> (i, a + a'))
+    . zipWith (\i (c,a) -> (c,(i,a))) [1..]
+
+{-
+maybeCombine' :: World -> World
+maybeCombine' [] = []
+maybeCombine' (flow:rest) = combine [] flow rest []
+    where
+        combine world flow [] [] = reverse (flow:world)
+        combine world flow [] (flow':rest) = combine (flow:world) flow' rest []
+        combine world flow (next:restFrom) restTo
+            | fst flow == fst next = combine world (combineFlow flow next) restFrom restTo
+            | otherwise            = combine world flow restFrom (next:restTo)
+
+        combineFlow (c,a) (c',a') = (c, a + a')
+-}
+
+processFlow :: Flow -> [Flow]
+processFlow flow@(configuration@Configuration{..}, amplitude) = processParticles particles
     where
         processParticles :: Set Particle -> [Flow]
         processParticles particles | S.null particles = [flow]
@@ -88,6 +112,12 @@ processConfiguration flow@(configuration@Configuration{..}, amplitude) = process
                       [newParticleDirect, newParticleReflected] = collide SemiMirrorLeft particle
                   in [(newConfigurationDirect, amplitude), (newConfigurationReflected, amplitude * i)]
 
+              collideWith (Just Obstacle) =
+                  let newConfiguration = configuration
+                          { particles = S.delete particle particles
+                          }
+                  in [(newConfiguration, amplitude)]
+
               collideWith (Just switch@(Switch b)) =
                   let newConfiguration = configuration
                           { particles = S.insert newParticle . S.delete particle $ particles
@@ -110,6 +140,10 @@ processConfiguration flow@(configuration@Configuration{..}, amplitude) = process
                           }
                       [newParticle] = passThrough particle
                   in [(newConfiguration, amplitude)]
+
+              i = 0 :+ 1
+
+
 
 collide :: Object -> Particle -> [Particle]
 collide MirrorRight ((x1, y1), (x2, y2)) =
@@ -161,32 +195,7 @@ passThrough ((x1, y1), (x2, y2))
 squaredModulus :: Amplitude -> Double
 squaredModulus (a :+ b) = abs $ a^2 + b^2
 
-i :: Amplitude
-i = 0 :+ 1
-
-main = do
-    let worlds = [(world1, 5, 5, 9), (world2, 9, 5, 9), (world3, 10, 10, 5), (world4, 12, 12, 5)]
-
-    args <- getArgs
-    let index = case args of
-            [index] -> read index
-            _       -> error $ "Usage: ./quantum.hs <index>, where index is [0.." <> show (length worlds - 1) <> "]"
-
-    let (world, width, height, time) = worlds !! index
-        evolution = take time (iterate evolve world)
-
---    traverse print evolution
-
-    hSetBuffering stdout NoBuffering
-    hSetBinaryMode stdout True
-    forever $ do
-        forM_ evolution $ \world -> do
-            putStr "\ESC[2J"
-            putStrLn $ renderWorld width height world
-            threadDelay 500000
-        threadDelay 2000000
-
--- Presentation --
+-- View --
 
 type View = [[String]]
 
@@ -208,8 +217,7 @@ renderWorld width height
     = showView
     . combineViewList
     . intersperse (spaceView 4 (round height))
-    . fmap (renderConfiguration width height)
-    . M.keys
+    . fmap (renderConfiguration width height . fst)
 
 renderConfiguration :: Double -> Double -> Configuration -> View
 renderConfiguration width height Configuration{..} = let
@@ -233,6 +241,7 @@ showObject = \case
     MirrorLeft      -> "\\\\"
     SemiMirrorRight -> "/ "
     SemiMirrorLeft  -> "\\ "
+    Obstacle        -> "# "
     Switch b        -> if b then "O " else "o "
     Detector n      -> show (n `mod` 10) <> " "
 
@@ -245,6 +254,7 @@ chunksOf n xs = step xs []
         step input output = case splitAt n input of
             (c, []) -> c : output
             (c, cs) -> c : step cs output
+
 
 -- Worlds --
 
@@ -262,7 +272,6 @@ initialAmplitude = (-1) :+ 0
 
 world1 :: World
 world1 =
-    M.fromList
     [ ( Configuration
         { particles = S.fromList
             [ ((0, 0), (1, 0))
@@ -287,7 +296,6 @@ world1 =
 
 world2 :: World
 world2 =
-    M.fromList
     [ ( Configuration
         { particles = S.fromList
             [ ((0, 0), (1, 0))
@@ -317,13 +325,78 @@ world2 =
 
 world3 :: World
 world3 =
-    M.fromList
     [ ( Configuration
         { particles = S.fromList
             [ ((0, 0), (1, 0))
             ]
         , objects = M.fromList
             [ ((4, 0), SemiMirrorRight)
+            , ((8, 0), MirrorRight)
+            , ((4, 4), MirrorRight)
+            , ((8, 4), SemiMirrorRight)
+            , ((12, 4), Detector 0)
+            , ((8, 8), Detector 0)
+            ]
+        }
+      , initialAmplitude
+      )
+    ]
+
+{-
+            D
+            |
+            ^
+            |
+     //--#--/->-D
+      |     |
+      ^     ^
+      |     |
+ -->--/-->--//
+
+-}
+
+world4 :: World
+world4 =
+    [ ( Configuration
+        { particles = S.fromList
+            [ ((0, 0), (1, 0))
+            ]
+        , objects = M.fromList
+            [ ((4, 0), SemiMirrorRight)
+            , ((8, 0), MirrorRight)
+            , ((4, 4), MirrorRight)
+            , ((6, 4), Obstacle)
+            , ((8, 4), SemiMirrorRight)
+            , ((12, 4), Detector 0)
+            , ((8, 8), Detector 0)
+            ]
+        }
+      , initialAmplitude
+      )
+    ]
+
+{-
+            D
+            |
+            ^
+            |
+     //-->--/->-D
+      |     |
+      ^     ^
+      |     |
+ -->--/--o--//
+
+-}
+
+world5 :: World
+world5 =
+    [ ( Configuration
+        { particles = S.fromList
+            [ ((0, 0), (1, 0))
+            ]
+        , objects = M.fromList
+            [ ((4, 0), SemiMirrorRight)
+            , ((6, 0), Switch False)
             , ((8, 0), MirrorRight)
             , ((4, 4), MirrorRight)
             , ((8, 4), SemiMirrorRight)
@@ -347,9 +420,8 @@ world3 =
 
 -}
 
-world4 :: World
-world4 =
-    M.fromList
+world6 :: World
+world6 =
     [ ( Configuration
         { particles = S.fromList
             [ ((0, 4), (1, 4))
@@ -365,3 +437,54 @@ world4 =
       )
     ]
 
+-- IO --
+
+getKey :: IO [Char]
+getKey = reverse <$> getKey' ""
+  where getKey' chars = do
+          char <- getChar
+          more <- hReady stdin
+          (if more then getKey' else return) (char:chars)
+
+main = do
+    let initWorlds =
+            [ (world1, 5, 5, 9)
+            , (world2, 9, 5, 9)
+            , (world3, 13, 9, 17)
+            , (world4, 13, 9, 17)
+            , (world5, 13, 9, 17)
+            , (world6, 9, 9, 9)
+            ]
+
+    args <- getArgs
+    let index = case args of
+            [index] -> read index
+            _       -> error $ "Usage: ./quantum.hs <index>, where index is [1.."
+                <> show (length initWorlds) <> "]"
+                <> "\nLeft/right arrow keys to navigate past/future, 'q' to quit"
+
+    let (world, width, height, time) = initWorlds !! (index - 1)
+        worlds = take time (iterate evolve world)
+
+        evolution index = do
+            putStr "\ESC[2J"
+            putStrLn $ renderWorld width height $ worlds !! index
+            key <- getKey
+            case key of
+                "q"      -> error "Quit"
+                "\ESC"   -> error "Quit"
+                "\ESC[D" -> evolution (dec index)
+                "\DEL"   -> evolution (dec index)
+                _        -> evolution (inc index)
+            where
+                size = length worlds
+                inc i | i == size - 1 = 0
+                      | otherwise     = i + 1
+                dec i | i == 0 = size - 1
+                      | otherwise     = i - 1
+
+    hSetBuffering stdin NoBuffering
+    hSetEcho stdin False
+    hSetBuffering stdout NoBuffering
+
+    forever $ evolution 0
