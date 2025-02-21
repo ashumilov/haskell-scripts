@@ -279,37 +279,12 @@ initialAmplitude = (-1) :+ 0
       |
       ^
       |
- -->--//
+ -->--/-->--D
 
 -}
 
 world1 :: World
 world1 =
-    [ Flow
-      { configuration = Configuration
-          { particles = S.fromList
-              [ ((0, 0), (1, 0))
-              ]
-          , objects = M.fromList
-              [ ((4, 0), MirrorRight)
-              , ((4, 4), Detector 0)
-              ]
-          }
-      , amplitude = initialAmplitude
-      }
-    ]
-
-{-
-      D
-      |
-      ^
-      |
- -->--/-->--D
-
--}
-
-world2 :: World
-world2 =
     [ Flow
       { configuration = Configuration
           { particles = S.fromList
@@ -338,8 +313,8 @@ world2 =
 
 -}
 
-world3 :: World
-world3 =
+world2 :: World
+world2 =
     [ Flow
       { configuration = Configuration
           { particles = S.fromList
@@ -371,8 +346,8 @@ world3 =
 
 -}
 
-world4 :: World
-world4 =
+world3 :: World
+world3 =
     [ Flow
       { configuration = Configuration
           { particles = S.fromList
@@ -405,8 +380,8 @@ world4 =
 
 -}
 
-world5 :: World
-world5 =
+world4 :: World
+world4 =
     [ Flow
       { configuration = Configuration
           { particles = S.fromList
@@ -438,8 +413,8 @@ world5 =
 
 -}
 
-world6 :: World
-world6 =
+world5 :: World
+world5 =
     [ Flow
       { configuration = Configuration
           { particles = S.fromList
@@ -468,12 +443,11 @@ getKey = reverse <$> getKey' ""
 main :: IO ()
 main = do
     let initWorlds =
-            [ (world1, 5, 5, 9)
-            , (world2, 9, 5, 9)
+            [ (world1, 9, 5, 9)
+            , (world2, 13, 9, 17)
             , (world3, 13, 9, 17)
             , (world4, 13, 9, 17)
-            , (world5, 13, 9, 17)
-            , (world6, 9, 9, 9)
+            , (world5, 9, 9, 9)
             ]
 
     args <- getArgs
