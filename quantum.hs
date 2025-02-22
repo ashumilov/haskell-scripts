@@ -442,13 +442,7 @@ getKey = reverse <$> getKey' ""
 
 main :: IO ()
 main = do
-    let initWorlds =
-            [ (world1, 9, 5)
-            , (world2, 13, 9)
-            , (world3, 13, 9)
-            , (world4, 13, 9)
-            , (world5, 9, 9)
-            ]
+    let initWorlds = [world1 , world2 , world3 , world4 , world5]
 
     args <- getArgs
     let idx = case args of
@@ -457,10 +451,13 @@ main = do
                 <> show (length initWorlds) <> "]"
                 <> "\nLeft/right arrow keys to navigate past/future, 'q' to quit"
 
-    let (world, width, height) = initWorlds !! (idx - 1)
+    let world = initWorlds !! (idx - 1)
         worlds = aliveWorlds <> [deadWorld]
         (aliveWorlds,deadWorld:_) = span alive $ iterate evolve world
         alive =  not . all (S.null . particles . configuration)
+        width = dim fst world
+        height = dim snd world
+        dim f = (+ 1) . maximum . concatMap (fmap f . M.keys . objects . configuration)
 
         evolution index = do
             putStr "\ESC[2J"
