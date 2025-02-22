@@ -443,11 +443,11 @@ getKey = reverse <$> getKey' ""
 main :: IO ()
 main = do
     let initWorlds =
-            [ (world1, 9, 5, 9)
-            , (world2, 13, 9, 17)
-            , (world3, 13, 9, 17)
-            , (world4, 13, 9, 17)
-            , (world5, 9, 9, 9)
+            [ (world1, 9, 5)
+            , (world2, 13, 9)
+            , (world3, 13, 9)
+            , (world4, 13, 9)
+            , (world5, 9, 9)
             ]
 
     args <- getArgs
@@ -457,8 +457,10 @@ main = do
                 <> show (length initWorlds) <> "]"
                 <> "\nLeft/right arrow keys to navigate past/future, 'q' to quit"
 
-    let (world, width, height, time) = initWorlds !! (idx - 1)
-        worlds = take time (iterate evolve world)
+    let (world, width, height) = initWorlds !! (idx - 1)
+        worlds = aliveWorlds <> [deadWorld]
+        (aliveWorlds,deadWorld:_) = span alive $ iterate evolve world
+        alive =  not . all (S.null . particles . configuration)
 
         evolution index = do
             putStr "\ESC[2J"
