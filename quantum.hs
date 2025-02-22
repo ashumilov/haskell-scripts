@@ -1,17 +1,18 @@
 #!/usr/bin/env stack
--- stack script --resolver lts-22.11 --package containers
+-- stack script --resolver lts-22.11 --package containers --package multiset
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 
 import           Control.Applicative
 import           Control.Monad
+import           Data.Char
 import           Data.Complex
 import           Data.List
 import           Data.Map            (Map)
 import qualified Data.Map            as M
 import           Data.Maybe
-import           Data.Set            (Set)
-import qualified Data.Set            as S
+import           Data.MultiSet       (MultiSet)
+import qualified Data.MultiSet       as S
 import           System.Environment
 import           System.IO
 
@@ -25,7 +26,7 @@ data Flow = Flow
     }
 
 data Configuration = Configuration
-    { particles :: Set Particle
+    { particles :: Particles
     , objects   :: Map Coord Object
     } deriving (Eq, Ord, Show)
 
@@ -40,6 +41,8 @@ data Object
     deriving (Eq, Ord, Show)
 
 type Amplitude = Complex Double
+
+type Particles = MultiSet Particle
 
 type Particle = (Coord, Coord)
 
@@ -60,9 +63,10 @@ maybeCombine
 processFlow :: Flow -> [Flow]
 processFlow flow = processParticles (particles . configuration $ flow) flow
 
-processParticles :: Set Particle -> Flow -> [Flow]
-processParticles particles flow | S.null particles = [flow]
-                                | otherwise        = foldr processParticle [flow] particles
+processParticles :: Particles -> Flow -> [Flow]
+processParticles particles flow
+    | S.null particles = [flow]
+    | otherwise        = foldr processParticle [flow] particles
 
 processParticle :: Particle -> [Flow] -> [Flow]
 processParticle particle@(_, position) = foldr processCollisionWithObject mempty
@@ -239,10 +243,10 @@ combineViews = zipWith (<>)
 
 showParticle :: Particle -> String
 showParticle ((x1, y1), (x2, y2))
-    | x1 == x2 && y1 < y2 = "^ "
-    | x1 == x2 && y1 > y2 = "v "
-    | x1 < x2 && y1 == y2 = "> "
-    | x1 > x2 && y1 == y2 = "< "
+    | x1 == x2 && y1 < y2 = chr 0x2191 : " "
+    | x1 == x2 && y1 > y2 = chr 0x2193 : " "
+    | x1 < x2 && y1 == y2 = chr 0x2192 : " "
+    | x1 > x2 && y1 == y2 = chr 0x2190 : " "
     | otherwise           = error $ "Invalid particle: " ++ show ((x1, y1), (x2, y2))
 
 showObject :: Object -> String
