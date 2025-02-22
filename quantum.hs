@@ -1,9 +1,10 @@
 #!/usr/bin/env stack
--- stack script --resolver lts-22.11 --package containers --package multiset
+-- stack script --resolver lts-22.11 --package containers --package multiset --package multimap
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 
 import           Control.Applicative
+import           Control.Arrow
 import           Control.Monad
 import           Data.Char
 import           Data.Complex
@@ -11,6 +12,7 @@ import           Data.List
 import           Data.Map            (Map)
 import qualified Data.Map            as M
 import           Data.Maybe
+import qualified Data.MultiMap       as MM
 import           Data.MultiSet       (MultiSet)
 import qualified Data.MultiSet       as S
 import           System.Environment
@@ -213,10 +215,10 @@ renderFlow dimentions Flow{..}
 renderConfiguration :: Coord -> Configuration -> View
 renderConfiguration (width, height) Configuration{..} = let
     worldMap = [ c | y <- [height-1,height-2..0], x <- [0..width-1], let c = showCell (x, y) ]
-    showCell coord = fromMaybe ". " $ getObject coord <|> getParticle coord
-    getParticle coord = showParticle . (coord, ) <$> M.lookup coord particlesMap
+    showCell coord = fromMaybe ". " $ getObject coord <|> getParticles coord
+    getParticles coord = showParticles $ MM.lookup coord particlesMap
     getObject coord = showObject <$> M.lookup coord objects
-    particlesMap = M.fromList . S.toList $ particles
+    particlesMap = MM.fromList . fmap (fst &&& id) . S.toList $ particles
     in chunksOf width worldMap
 
 renderCaption :: Coord -> Amplitude -> View
@@ -241,13 +243,28 @@ combineViews = zipWith (<>)
 
 -- Show --
 
-showParticle :: Particle -> String
-showParticle ((x1, y1), (x2, y2))
-    | x1 == x2 && y1 < y2 = chr 0x2191 : " "
-    | x1 == x2 && y1 > y2 = chr 0x2193 : " "
-    | x1 < x2 && y1 == y2 = chr 0x2192 : " "
-    | x1 > x2 && y1 == y2 = chr 0x2190 : " "
-    | otherwise           = error $ "Invalid particle: " ++ show ((x1, y1), (x2, y2))
+showParticles :: [Particle] -> Maybe String
+showParticles [] = Nothing
+showParticles particles
+    = Just
+    . (: " ")
+    $ case particles of
+          e@[((x1, y1), (x2, y2))]
+              | x1 == x2 && y1 < y2 -> chr 0x2191
+              | x1 == x2 && y1 > y2 -> chr 0x2193
+              | x1 < x2 && y1 == y2 -> chr 0x2192
+              | x1 > x2 && y1 == y2 -> chr 0x2190
+              | otherwise           -> showError e
+
+          e@[((x1, y1), (x2, y2)), _]
+              | x1 == x2 && y1 < y2 -> chr 0x21C8
+              | x1 == x2 && y1 > y2 -> chr 0x21CA
+              | x1 < x2 && y1 == y2 -> chr 0x21C9
+              | x1 > x2 && y1 == y2 -> chr 0x21C7
+              | otherwise           -> showError e
+
+          e  -> showError e
+    where showError = error . ("Invalid particle: " <>) . show
 
 showObject :: Object -> String
 showObject = \case
